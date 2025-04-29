@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Personal Network Manager</title>
+  <script type="text/javascript" src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
+  <link href="https://unpkg.com/vis-network@9.1.2/styles/vis-network.min.css" rel="stylesheet" />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+    }
+    #loginSection, #networkSection {
+      margin: 20px;
+    }
+    input, button, textarea {
+      margin: 5px;
+      padding: 5px;
+    }
+    #network {
+      width: 100%;
+      height: 600px;
+      border: 1px solid gray;
+      margin-top: 10px;
+    }
+    #myNetworksList {
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="loginSection">
+  <h2>Login / Signup</h2>
+  <input type="text" id="username" placeholder="Username"><br>
+  <input type="password" id="password" placeholder="Password"><br>
+  <button onclick="login()">Login</button>
+  <button onclick="signup()">Signup</button>
+</div>
+
+<div id="networkSection" style="display:none;">
+  <h2>Welcome, <span id="currentUser"></span>!</h2>
+  <button onclick="newNetwork()">New Network</button>
+  <button onclick="showMyNetworks()">My Networks</button>
+  <button onclick="saveNetwork()">Save This Network</button>
+  <button onclick="logout()">Logout</button>
+  <button onclick="confirmDeleteAccount()">Delete Account</button>
+  <button onclick="changeUserName()">Change Username</button>
+  <div id="myNetworksList" style="display:none;"></div>
+
+  <div class="controls">
+    <h3>Manage People & Connections</h3>
+    <input type="text" id="nodeName" placeholder="Person name">
+    <label>Color:</label><input type="color" id="nodeColor" value="#97C2FC">
+    <button onclick="addNode()">Add Person</button>
+    <button onclick="deleteNode()">Delete Person</button><br>
+    <input type="text" id="fromNode" placeholder="From (name)">
+    <input type="text" id="toNode" placeholder="To (name)">
+    <input type="text" id="connectionName" placeholder="Connection name">
+    <label>Color:</label><input type="color" id="edgeColor" value="#848484">
+    <button onclick="addEdge()">Add Connection</button><br>
+    <input type="text" id="infoNodeName" placeholder="Person name">
+    <textarea id="personInfo" placeholder="Person info" rows="2" cols="30"></textarea>
+    <button onclick="addInfo()">Add/Update Info</button>
+    <button onclick="renameNetwork()">Rename Saved Network</button>
+    <button onclick="deleteSavedNetwork()">Delete Saved Network</button>
+  </div>
+
+  <div id="network"></div>
+
+  <!-- Info Popup -->
+  <div id="infoBox" style="display:none; position:absolute; background:white; border:1px solid #ccc; padding:10px; border-radius:8px; max-width:250px;">
+    <div id="closeBtn" onclick="closeInfoBox()" style="float:right;cursor:pointer;">X</div>
+    <div id="infoContent"></div>
+  </div>
+</div>
+
+<script>
+  let users = JSON.parse(localStorage.getItem('users')) || {};
+  let currentUser = null;
+  let currentNetworkName = null;
+  let nodes = new vis.DataSet([]);
+  let edges = new vis.DataSet([]);
+  let extraInfo = {};
+  let network;
+  
+  function saveUsers() {
+    localStorage.setItem('users', JSON.stringify(users));
+  }
+
+  function login() {
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value.trim();
+
+    if (users[username] && users[username].password === password) {
+      currentUser = username;
+      enterNetworkSection();
+    } else {
+      alert('Incorrect username or password.');
+    }
+  }
+
+  function signup() {
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value.trim();
+
+    if (users[username]) {
+      alert('Username already taken.');
+      return;
+    }
+    if (!username || !password) {
+      alert('Fill both fields.');
+      return;
+    }
+
+    users[username] = { password: password, networks: {} };
+    saveUsers();
+    alert('Signup successful! Now login.');
+  }
+
+  function enterNetworkSection() {
+    document.getElementById('loginSection').style.display = 'none';
+    document.getElementById('networkSection').style.display = 'block';
+    document.getElementById('currentUser').innerText = currentUser;
+    createNetwork();
+  }
+
+  function createNetwork() {
+    const container = document.getElementById('network');
+    const data = { nodes: nodes, edges: edges };
+    const options = {
+      nodes: { shape: 'dot', size: 20, font: { size: 16 }},
+      edges: { arrows: 'to', font: { align: 'top', size: 14 }},
+      physics: { enabled: true, solver: 'forceAtlas2Based' }
+    };
+    network = new vis.Network(container, data, options);
+
+    network.on("click", function(params) {
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const node = nodes.get(nodeId);
+
+        const infoBox = document.getElementById('infoBox');
+        const infoContent = document.getElementById('infoContent');
+        let infoHtml = <strong>Name:</strong> ${node.label}<br>;
+        infoHtml += extraInfo[node.label] ? <strong>Info:</strong> ${extraInfo[node.label]} : <em>No extra info.</em>;
+
+        infoContent.innerHTML = infoHtml;
+        infoBox.style.display = "block";
+        infoBox.style.left = (params.pointer.DOM.x + 20) + "px";
+        infoBox.style.top = (params.pointer.DOM.y + 20) + "px";
+      }
+    });
+  }
+
+  function closeInfoBox() {
+    document.getElementById('infoBox').style.display = 'none';
+  }
+
+  function newNetwork() {
+    if (confirm('Start a new network? (Unsaved work will be lost)')) {
+      nodes.clear();
+      edges.clear();
+      extraInfo = {};
+      currentNetworkName = null;
+    }
+  }
+
+  function saveNetwork() {
+    const name = prompt('Enter a name for this network:');
+    if (!name) return;
+
+    const networkData = {
+      nodes: nodes.get(),
+      edges: edges.get(),
+      extraInfo: extraInfo
+    };
+
+    users[currentUser].networks[name] = networkData;
+    saveUsers();
+    alert('Network saved as "' + name + '"');
+    currentNetworkName = name;
+  }
+
+  function showMyNetworks() {
+    const listDiv = document.getElementById('myNetworksList');
+    listDiv.innerHTML = '<h4>Your Networks:</h4>';
+
+    const networks = users[currentUser].networks;
+    for (const name in networks) {
+      const btn = document.createElement('button');
+      btn.innerText = name;
+      btn.onclick = () => loadNetwork(name);
+      listDiv.appendChild(btn);
+    }
+
+    listDiv.style.display = 'block';
+  }
+
+  function loadNetwork(name) {
+    const net = users[currentUser].networks[name];
+    nodes.clear();
+    edges.clear();
+    extraInfo = {};
+
+    nodes.add(net.nodes);
+    edges.add(net.edges);
+    extraInfo = net.extraInfo || {};
+    currentNetworkName = name;
+    alert('Loaded network: ' + name);
+  }
+
+  function findNodeIdByName(name) {
+    const allNodes = nodes.get();
+    const node = allNodes.find(n => n.label === name);
+    return node ? node.id : null;
+  }
+
+  function addNode() {
+    const name = document.getElementById('nodeName').value.trim();
+    const color = document.getElementById('nodeColor').value;
+    if (name === "" || findNodeIdByName(name)) return alert("Invalid or duplicate person.");
+    nodes.add({ id: name, label: name, color: color });
+    document.getElementById('nodeName').value = "";
+  }
+
+  function deleteNode() {
+    const name = document.getElementById('nodeName').value.trim();
+    const id = findNodeIdByName(name);
+    if (!id) return alert("Person not found.");
+    nodes.remove({ id: id });
+    edges.remove(edge => edge.from === id || edge.to === id);
+    delete extraInfo[name];
+    document.getElementById('nodeName').value = "";
+  }
+
+  function addEdge() {
+    const from = document.getElementById('fromNode').value.trim();
+    const to = document.getElementById('toNode').value.trim();
+    const label = document.getElementById('connectionName').value.trim();
+    const color = document.getElementById('edgeColor').value;
+
+    const fromId = findNodeIdByName(from);
+    const toId = findNodeIdByName(to);
+    if (!fromId || !toId || fromId === toId) return alert("Invalid connection.");
+
+    edges.add({ from: fromId, to: toId, label: label, color: { color: color }, font: { color: color } });
+    document.getElementById('fromNode').value = "";
+    document.getElementById('toNode').value = "";
+    document.getElementById('connectionName').value = "";
+  }
+
+  function addInfo() {
+    const name = document.getElementById('infoNodeName').value.trim();
+    const info = document.getElementById('personInfo').value.trim();
+    if (!name || !info) return alert("Please enter person and info.");
+    if (!findNodeIdByName(name)) return alert("Person not found.");
+
+    extraInfo[name] = info;
+    document.getElementById('infoNodeName').value = "";
+    document.getElementById('personInfo').value = "";
+    alert("Information added for " + name);
+  }
+
+  function renameNetwork() {
+    if (!currentNetworkName) return alert("No network selected to rename.");
+    const newName = prompt('Enter a new name for the network:', currentNetworkName);
+    if (!newName) return;
+
+    const networkData = users[currentUser].networks[currentNetworkName];
+    delete users[currentUser].networks[currentNetworkName];
+    users[currentUser].networks[newName] = networkData;
+    saveUsers();
+    currentNetworkName = newName;
+    alert('Network renamed to "' + newName + '"');
+  }
+
+  function deleteSavedNetwork() {
+    if (!currentNetworkName) return alert("No network selected to delete.");
+    if (confirm('Are you sure you want to delete the network "' + currentNetworkName + '"?')) {
+      delete users[currentUser].networks[currentNetworkName];
+      saveUsers();
+      alert('Network deleted.');
+      currentNetworkName = null;
+    }
+  }
+
+  function confirmDeleteAccount() {
+    if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
+      delete users[currentUser];
+      saveUsers();
+      alert('Account deleted successfully.');
+      logout();
+    }
+  }
+
+  function changeUserName() {
+    const newUserName = prompt('Enter a new username:');
+    if (!newUserName || users[newUserName]) return alert("Invalid or username already taken.");
+    users[newUserName] = users[currentUser];
+    delete users[currentUser];
+    currentUser = newUserName;
+    saveUsers();
+    alert('Username changed successfully to "' + newUserName + '"');
+  }
+
+  function logout() {
+    currentUser = null;
+    document.getElementById('loginSection').style.display = 'block';
+    document.getElementById('networkSection').style.display = 'none';
+  }
+  
+</script>
+
+</body>
+</html>
